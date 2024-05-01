@@ -1,0 +1,994 @@
+---
+title: "Linear Regression"
+author: "Alison Pedraza"
+date: '2024-04-29'
+output: rmarkdown::github_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set( warning = FALSE, message = FALSE)
+library(readr)
+library(knitr)
+#ibrary(caret)
+library(tidyverse)
+library(magrittr)
+library(dplyr)
+library(tidyr)
+library(hrbrthemes)
+library(viridis)
+library(kableExtra)
+library(maps) # for mapping the USA by county and state
+library(stringr)  # to turn first letter of column data into capital letter
+library(MASS)
+library(MASS)   # For using Box-Cox Transformation function
+
+
+```
+
+### Project Purpose, Contents, and Data Sources:
+***
+
+**Purpose**
+
+  + First Order Linear Regression using data from chronic disease indicator and covid data sets to model percent smokers.
+
+<br>
+
+**Contents:**
+
+  + Download two separate data sets, scrub and clean  each.
+  
+  + Join both data sets and prepare data.
+  
+  + Exploratory Data Analysis (EDA) on final data frame
+
+  + First order simple and multiple linear regression
+  
+  + Study of Residuals and other Diagnostics
+  
+  + Possible Remedial measures considered
+
+<br>
+
+
+**The Data:**
+
+- Chronic Disease Indicators data set:
+
+  + Disease Indicators data comes from Data.gov,  U.S. Department of Health & Human Services, and Centers of Disease Control and Prevention.
+  
+  + Full dataset name: **U.S. Chronic Disease Indicators**
+  
+  + URL link: **https://catalog.data.gov/dataset/u-s-chronic-disease-indicators-cdi**
+  
+  + The full data set is offered on the above website.
+  
+  + Since the original data set has 124 indicators and very large, a subset of the original dataset was used for the purposes of this analysis exercise.
+  
+  <br>
+  
+- Covid Data:
+
+  + From Kaggle Website : **https://www.kaggle.com/datasets/imdevskp/corona-virus-report**
+  
+  + Dataset is from year 2020.
+  
+  + Contains data at the county and state level.
+  
+
+<br>
+
+### Data Collection and Preparation:
+***
+
+- Chronic Disease Indicator Data:
+```{r echo= TRUE , include=TRUE}
+DI_df <- read.csv("Disease_Indicators_data.csv")
+
+DI_df2<- DI_df%>%dplyr::select("County", "Percent.of.population.aged.18.34", "Percent.of.population.65.or.older", "Number.of.active.physicians","Number.of.hospital.beds", "Total.serious.crimes" , "Percent.high.school.graduates", "Percent.bachelor.s.degrees", "Percent.below.poverty.level" , "Percent.unemployment",  "Total.personal.income", "Geographic.region")
+
+colnames(DI_df2) <- c("county", "Percent_population_aged_18_34","Percent_population_65_older","Number_active._physicians","Number_hospital_beds", "Total_serious_crimes" , "Percent_highschool_graduates","Percent_bachelor_degrees","Percent_below_poverty_level" , "Percent_unemployment",  "Total_personal_income", "Geographic_region")
+
+DI_df2$NE <- I(DI_df2$Geographic_region=="1")*1
+DI_df2$MW <- I(DI_df2$Geographic_region=="2")*1
+DI_df2$STH <- I(DI_df2$Geographic_region=="3")*1
+DI_df2$WST <- I(DI_df2$Geographic_region=="4")*1
+
+
+# Remove the '_' character from the county names in the  'county' column :
+DI_df2$county<-gsub("_"," ",as.character(DI_df2$county))
+```
+
+<br>
+
+- Covid Data
+```{r echo= TRUE ,  include=TRUE}
+covid_df <- read.csv("covid_data.csv")
+
+# select columns
+covid_df2<- covid_df%>%dplyr::select("date", "county" , "state" ,  "fips" ,  "lat", "lon","cases"  ,  "deaths", "stay_at_home_announced",        "stay_at_home_effective" ,  "total_population","area_sqmi" ,"population_density_per_sqmi","num_deaths",                     "years_of_potential_life_lost_rate", "percent_smokers" ,"percent_adults_with_obesity" ,"food_environment_index", "income_ratio" ,   "percent_physically_i0ctive" , "percent_uninsured" ,"num_primary_care_physicians" )
+covid_df2$date <- as.Date(covid_df2$date,format = "%m/%d/%Y")
+
+
+# Group by county and state - with MAX COVID CASES AND COVID DEATHS
+covid_df3 <- covid_df2%>%group_by( county, state, fips, lat, lon, total_population, population_density_per_sqmi,  years_of_potential_life_lost_rate,percent_smokers,percent_adults_with_obesity,
+              food_environment_index,income_ratio,percent_physically_i0ctive,percent_uninsured,
+              num_primary_care_physicians)%>%summarise(total_covid_cases = max(cases), total_covid_deaths = max(deaths))
+
+colnames(covid_df3)[13] <- "Percent_physically_inactive"
+
+covid_df3[is.na(covid_df3)] = 0 # Replace NA with 0
+
+```
+
+<br>
+
+#### Final Data Frame
+
+  + Because of unmatched counties, there are some NA values from joining the two data frames.
+  
+  + Columns with NA values:
+  
+    - years_of_potential_life_lost_rate 
+    - food_environment_index  
+    - income_ratio   
+    - num_primary_care_physicians
+
+<br>
+
+  
+  + Replaced NA values with 0 instead of removing the rows.
+  
+<br>
+
+```{r echo= TRUE ,  include=TRUE}
+# Join the two data frames by County since what have in common
+df <- left_join(covid_df3, DI_df2, by = c("county"))   # Using Max Covid cases and Covid deaths
+#summary(covid_df2)
+
+# Using Max deaths and Max Covid Cases
+df <- df%>%drop_na(Percent_population_aged_18_34,  Percent_population_65_older, Number_active._physicians, Number_hospital_beds ,Total_serious_crimes, Percent_highschool_graduates ,Percent_bachelor_degrees ,Percent_below_poverty_level, Percent_unemployment,Total_personal_income)
+
+df$total_covid_deaths <- replace(df$total_covid_deaths, df$total_covid_deaths == 0, 0.01)
+
+kbl(head(df)) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"))# length(unique(df$state))
+
+```
+
+<br>
+
+  + Look data in detail from final data frame, df2:
+
+```{r}
+str(df, max.level = 2)
+
+```
+
+<br>
+
+- Map data frame:
+```{r  echo= TRUE ,  include=TRUE}
+# get state data from 'map' library
+states <- map_data("state")
+###########################################################################
+
+# Add 'group' column to dataframe
+    # Step1:  get county data from maps
+county_map <- map_data("county")
+county_map$subregion<- str_to_title(county_map$subregion)
+county_map$region<- str_to_title(county_map$region)
+#############################################################################
+
+# Using covid_df2 for mapping
+covid_df3_map<- covid_df2%>%dplyr::select("county"  ,"state", "fips" , "total_population", "cases", "deaths", "percent_smokers", "income_ratio" )
+colnames(covid_df3_map)[2] <- "region"
+colnames(covid_df3_map)[1] <- "subregion"
+
+covid_df3_map <- covid_df3_map%>%group_by( subregion, region, fips, total_population,  percent_smokers, income_ratio)%>%summarise(total_covid_cases = max(cases), total_covid_deaths = max(deaths))
+
+# Joion the two data frames
+covid_df3_map2 <- left_join(covid_df3_map, county_map, by = c('region', 'subregion'))
+covid_df3_map2 <- covid_df3_map2%>%drop_na(long ,lat, group, order)
+```
+
+
+<br>
+
+### Exploratory Data Analysis on Data
+
+***
+
+<br>
+
+#### Map: Income Ratio and Percent Smokers at County level in the United States
+
+  + Income ratio is defined as: monthly debt/monthly income.
+  
+    - A higher income ratio indicates higher personal debt than monthly personal income earned.
+
+<br>
+
+  + In the Southern region of the U.S.A., there are more counties that have both a high income ratio and a high percentage of smokers.
+  
+<br>
+
+```{r out.width=c('50%'), fig.show='hold', echo= TRUE , include=TRUE}
+
+
+ggplot() +
+  geom_polygon(data = covid_df3_map2, aes(fill = income_ratio, x = long, y = lat, group = group)) +
+   geom_polygon(data = states, aes(x = long, y = lat, group = group), color = "white", fill = "transparent",  size = 0.1, alpha = 0.3)+
+  theme_minimal() +
+  scale_fill_viridis(option = "plasma", trans = "log", breaks=c( 2.5, 3, 3.5, 4, 4.5, 5, 5.5,  6,6.5,  7, 7.5, 8, 8.5), name="Income Ratio", guide = guide_legend( keyheight = unit(3, units = "mm"), keywidth=unit(12, units = "mm"), label.position = "bottom", title.position = 'top', nrow=1) ) +
+   labs(
+    title = "Income Ratio per County",
+  #  subtitle = "Number of restaurant per city district",
+  ) + theme(legend.position = "bottom")+
+  theme(axis.line = element_blank(), axis.text = element_blank(),
+        axis.ticks = element_blank(), axis.title = element_blank()) +
+  coord_map()
+
+  # 
+
+ggplot() +
+  geom_polygon(data = covid_df3_map2, aes(fill = percent_smokers, x = long, y = lat, group = group)) +
+   geom_polygon(data = states, aes(x = long, y = lat, group = group), color = "white", fill = "transparent",  size = 0.1, alpha = 0.3)+
+  theme_minimal() +
+    scale_fill_viridis(option = 'magma',trans = "log", breaks=c( 5, 10, 15, 20, 25, 30, 35, 40, 45), name="Percent Smokers per County", guide = guide_legend( keyheight = unit(3, units = "mm"), keywidth=unit(12, units = "mm"), label.position = "bottom", title.position = 'top', nrow=1) ) +
+  labs(
+    title = "Percent Smokers per County",
+  #  subtitle = "Number of restaurant per city district",
+  ) + theme(legend.position = "bottom")+
+  theme(axis.line = element_blank(), axis.text = element_blank(),
+        axis.ticks = element_blank(), axis.title = element_blank()) +
+  coord_map()
+```
+
+<br>
+
+
+
+<br>
+
+
+#### Histogram, Density, and Scatter Plots:  
+***
+
+<br>
+
+<br>
+
+ 
+##### Histogram of Percent Smokers: 
+
+  + Slightly left skewed but mostly normal shaped.
+
+<br>
+
+```{r  out.width=c('50%'), fig.show='hold',echo=FALSE, include=TRUE}
+
+df%>%ggplot( aes(x=percent_smokers)) +
+    geom_histogram(bins=20, fill='skyblue', color='#69b3a2') + scale_x_log10() + ggtitle("Histogram of Percent Smokers")
+```
+  
+```{r echo=FALSE, include=TRUE}
+
+new_df <- df%>%filter(state %in% c("Texas","California","Florida","Illinois", "Ohio", "New York", "Massachusetts", "New Jersey"))
+```
+
+<br>
+
+##### Density Plots
+
+<br>
+
+  + Data on percent smokers, income ratio, and percent uninsured is at the county level. 
+  + Below are the distributions of the counties for each state of these variables.
+  + Percent Smokers:
+  
+    - California, for example, has a county with 15 percent of the population which are smokers. That is one of the highest in the state.
+    - Florida has a wide distribution of percent smokers across the state, but all counties have a high percentage compared to California
+  + Uninsured: 
+    - Texas and Florida counties have a high percentage of uninsured residents.
+
+<br>
+
+
+```{r  out.width=c('50%'), fig.show='hold',echo=FALSE, include=TRUE}
+library(ggridges)
+library(forcats)
+ggplot(new_df, aes(x = income_ratio, y = state, fill = state)) +
+  geom_density_ridges() +
+  theme_ridges() + 
+  theme(legend.position = "none") +  ggtitle("Income Ratio: Distribution of Counties")
+
+
+ggplot(new_df, aes(x = percent_smokers, y = state, fill = state)) +
+  geom_density_ridges() +
+  theme_ridges() +  ggtitle("Percent Smokers: Distribution of Counties")+
+  theme(legend.position = "none")
+
+
+ggplot(new_df, aes(x = percent_uninsured, y = state, fill = ..x..)) +
+  geom_density_ridges_gradient(scale = 3, rel_min_height = 0.01) +
+  scale_fill_viridis(name = "Temp. [F]", option = "C") +
+  theme_ipsum() + ggtitle("Uninsured:  Distribution of Counties")+
+    theme(
+      legend.position="none",
+      panel.spacing = unit(0.1, "lines"),
+      strip.text.x = element_text(size = 8)
+    )
+
+```
+
+
+<br>
+
+
+
+<br>
+
+##### Scatter Plots
+
+<br>
+
+
++ Each point the the scatter plot represents a county.
+  + Income Ratio: monthly debt / monthly income. 
+  + From the scatter plots:
+  
+    - There seems to be a linear relationship between **income ratio** and **percent smokers**. As the county's income_ratio increases, it seems the percent of smokers also increases. Counties with larger monthly debt per household have a higher percent of smokers.
+    
+    - There also seems to be a slight parabolic as well as funnel shape relationship between **percent uninsured** and **percent smokers** when we add the variable **Geographic_region** (North East, Southern Region, MidWest, West).
+
+<br>
+
+```{r out.width=c('50%'), fig.show='hold',echo=FALSE, include=TRUE }
+
+df%>%ggplot(aes(x= Percent_unemployment, y= percent_smokers, color =Percent_unemployment)) + 
+    geom_point(size=1, color = "purple")+
+  scale_color_brewer(palette = "PuOr")+
+  scale_y_continuous(labels = scales::label_number_si())+
+    labs(y = "percent smokers", x = "percent unemployment")+ggtitle("Percent Unemployment vs. Percent Smokers")+
+    theme_ipsum()
+
+df%>%ggplot(aes(x= income_ratio, y= percent_smokers, color = income_ratio))+
+    geom_point(alpha = 0.5)+
+  scale_y_continuous(labels = scales::label_number_si())+
+    labs(y = "Percent smokers", x = "Income Ratio")+ggtitle("Income Ratio vs. Percent smokers")+
+    theme_ipsum()
+
+df%>%ggplot(aes(x= percent_uninsured, y = percent_smokers)) + 
+    geom_point( alpha =0.5) +
+  scale_size(range = c(.1, 10))+
+ # scale_color_brewer(palette = "PuOr")+
+  scale_y_continuous(labels = scales::label_number_si())+
+    labs(y = "Percent Smokers", x = "Percent Uninsured")+ 
+  ggtitle("Percent Uninsured vs. Percent Smokers")+
+    theme_ipsum()
+
+df%>%ggplot(aes(x= percent_uninsured, y = percent_smokers,  color = Geographic_region)) + 
+    geom_point( alpha =0.5) +
+  scale_size(range = c(.1, 10))+
+ # scale_color_brewer(palette = "PuOr")+
+  scale_y_continuous(labels = scales::label_number_si())+
+    labs(y = "Percent Smokers", x = "Percent Uninsured")+ 
+  ggtitle("Percent Uninsured & Region vs. Percent Smokers")+
+    theme_ipsum()
+
+library(ggthemes)
+
+df%>%filter(Geographic_region %in% c("4"))%>%ggplot(aes(x= percent_uninsured, y = percent_smokers, size = income_ratio,color = income_ratio)) + 
+    geom_point( alpha =0.7) +
+  scale_size(range = c(.1, 5))+
+ # scale_color_brewer(palette = "PuOr")+
+  scale_y_continuous(labels = scales::label_number_si())+  theme_calc()+scale_color_viridis(option = "cividis") +
+    labs(y = "Percent Smokers", x = "Percent Uninsured")+ 
+  ggtitle("West: Percent Uninsured vs. Percent Smokers")
+
+df%>%filter(Geographic_region %in% c("3"))%>%ggplot(aes(x= percent_uninsured, y = percent_smokers, size = income_ratio,color = income_ratio)) + 
+    geom_point( alpha =0.7) +
+  scale_size(range = c(.1, 5))+
+ # scale_color_brewer(palette = "PuOr")+
+  scale_y_continuous(labels = scales::label_number_si())+  theme_calc()+scale_color_viridis(option = "plasma") +
+    labs(y = "Percent Smokers", x = "Percent Uninsured")+ 
+  ggtitle("South: Percent Uninsured vs. Percent Smokers")
+
+df%>%filter(Geographic_region %in% c("2"))%>%ggplot(aes(x= percent_uninsured, y = percent_smokers,size = income_ratio, color = income_ratio)) + 
+    geom_point( alpha =0.7) +
+  scale_size(range = c(.1, 5))+ theme_calc()+scale_color_viridis(option = "inferno") +
+  scale_y_continuous(labels = scales::label_number_si())+
+    labs(y = "Percent Smokers", x = "Percent Uninsured")+ 
+  ggtitle("MidWest: Percent Uninsured vs. Percent Smokers")
+
+df%>%filter(Geographic_region %in% c("1"))%>%ggplot(aes(x= percent_uninsured, y = percent_smokers,size = income_ratio, color = income_ratio)) + 
+    geom_point( alpha =0.5) +
+  scale_size(range = c(.1, 5))+   theme_calc()+scale_color_viridis(option = "magma") +
+  scale_y_continuous(labels = scales::label_number_si())+
+    labs(y = "Percent Smokers", x = "Percent Uninsured")+ 
+  ggtitle("North East: Percent Uninsured vs. Percent Smokers")
+
+```
+
+
+<br>
+
+<br>
+
+### Model: Simple Linear Regression
+***
+
+  + **Predictor Variable:**  income ratio
+  
+  + **Dependent Variable:** percent smokers
+  
+  + **Resulting Regression Function:**    Y = 9.742844 + 1.673996 *income_ratio*
+
+
+```{r echo=TRUE, include=TRUE}
+# Model
+reg_linear <- lm(percent_smokers ~ income_ratio, data = df )
+# summary(reg_linear)
+
+# coefficients of slope and intercept
+coeffs<- summary(reg_linear)$coefficients
+intercept<-coeffs[1]
+slope<- coeffs[2]
+coeffs
+
+```
+
+<br>
+
+#### Plot of regression line:
+
+  - The plot the predictor variable, **income_ratio**, and **percent smokers** shows that linear regression function is appropriate.
+  - The line is not steep but it also does not have a slope of zero. Many of the observations are spread out and far from the mean ($y=0$). This will most likely result in a small $R^2$ since the Total Sum of Squares (SSTO) will be very large.
+  
+<br>
+
+```{r out.width=c('50%'), fig.show='hold',echo= FALSE , warning=FALSE, message = FALSE, include=TRUE}
+
+ pop_plot<- ggplot(data = df, aes(x=income_ratio, y= percent_smokers)) + geom_point( color="deeppink1")+
+  geom_abline(intercept = intercept, slope = slope, color="black", 
+                size=1)+ ggtitle("Income Ratio vs. Percent Smokers") +
+   ylab("Percent Smokers") + xlab("Income Ratio")
+
+
+pop_plot
+```
+
+
+<br>
+
+#### The T-Test
+***
+
+To see if there is linear association between the number of **income_ratio** and **percent_smokers**.
+
+<br>
+
+The Alternatives:
+
+- $H_0$: $b_1$ = 0. There is no relationship.
+- $H_1$: $b_1$ $\neq$ 0. There is a relationship.
+
+<br>
+
+The Decision Rule:  (for **$a$ = 0.05, $t_a$ = 1.965395**)
+
+- Accept  $H_0$ if t* < $t_a$. 
+- Reject  $H_0$ if t* > $t_a$.
+
+<br>
+
+          
+Conclusion:
+
+- For $b_1$:  We reject the null hypothesis. There is a linear relationship between income_ratio and percent_smokers
+
+  + The t statistic for $b_1$ = 15.31158
+
+    - (t* = 15.31158) > ($t_a$ = 1.96)
+    
+<br>
+
+- For $b_0$: We reject the null hypothesis. The intercept is significant.
+    
+  + The t statistic for $b_0$ = 19.33209
+
+    - (t* = 19.33209) < ($t_a$ = 1.96)
+    
+<br>
+    
+ $t_a$        Intercept  t*        Slope  t* 
+----------    --------------        --------
+1.965395        19.33209             15.31158
+----------    --------------        --------
+
+<br>
+
+```{r include=TRUE, echo=TRUE}
+
+
+# standard of error of slope and intercept
+#coef(summary(reg_linear))[, "Std. Error"]
+int_ste <-  coef(summary(reg_linear))[, "Std. Error"][1]
+slope_ste <- coef(summary(reg_linear))[, "Std. Error"][2]
+
+# N-2 degrees of freedom
+observations = 1910
+degree_freedom = observations - 2
+
+# T- statistic& p-value calculation
+t_statistic_slope = slope/slope_ste
+t_statistic_intercept = intercept/int_ste
+```
+
+
+```{r include=TRUE, echo=TRUE}
+t_statistic_slope
+t_statistic_intercept
+```
+
+<br>
+
+<br>
+
+#### The P value:
+***
+
+For the p-value, we need:
+
+  - t* and degrees of freedom
+  
+  - p_value_intercept = 2 x (1 - pt(t*, degrees of freedom))
+  
+<br>
+
+Conclusion:
+
+  - The p-value for the slope, $b_1$ is essentially 0. 
+
+  - This result also supports our earlier conclusion that there is a linear relationship between **income_ratio** and **percent_smokers** and it is statistically significant.
+
+```{r include=TRUE, echo=TRUE}
+p_value_b1 = 2 * (1 - pt(t_statistic_slope, degree_freedom))
+
+p_value_b1
+```
+
+<br>
+
+    
+    
+<br>
+
+#### 90% Confidence Interval for $b_1$
+
+  + Confidence interval:  [1.494079 , 1.853913]
+
+  
+  + If we were to repeat this test 90 times, the value of $b_1$ would fall somewhere in this interval. 
+  
+  + The confidence interval for $b_1$ does not include zero, therefore, from the confidence interval we can also conclude the slope is significant. 
+
+  
+```{r include=TRUE, echo=TRUE}
+confint(reg_linear, "income_ratio", level = 0.90)
+
+
+```
+
+<br>
+
+#### From Summary
+
+  - The summary output confirms our previous results from doing the t-test, p-value, and confidence interval:
+  
+    + The predictor income ratio is significant.
+    + The $R^2$ = 0.1094 which is low. 
+    + A low $R^2$ does not necessarily mean there is not a linear relationship between **income_ratio** and **percent_smokers**. The scatter plot shows a wide but linearly increasing set of observations. Also, the resulting regression line is not very steep (from previous plot), increasing slowly, therefore the Regression Sum of Squares (SSR) will naturally be low contributing to the small $R^2$ value.
+    
+    + Variance: 10.9714
+    
+
+```{r include=TRUE, echo=FALSE}
+summary(reg_linear)
+var <- (summary(reg_linear)$sigma)^2
+var
+```
+
+
+<br>
+
+<br>
+
+### Study of Residuals and Other Diagnostics
+***
+
+<br>
+
+#### Plots: Time Plot, Residuals vs Y, Normal QQ, Error Variances, Scale-Location, Residual vs Leverage
+***
+
+  + Time plot of residuals:
+  
+    - There is no obvious pattern in the time plot, therefore the resduals are independent.
+    
+<br>
+
+```{r out.width=c('50%'), fig.show='hold', echo= FALSE , include=TRUE}
+ei<-reg_linear$residuals
+n<-seq(1:length(ei))
+par(mfrow=c(1,1))
+plot(n,ei,type="l")
+
+```
+
+<br>
+
+  + Additional Plots to check regression assumptions:
+  
+    - Residual plot: errors are evenly distributed around zero. We can conclude that the errors are constant in this model.
+    - Normal QQ plot: the errors are falling nicely on the diagonal line with very little departure at the tails. The errors are normally distributed
+    - Residual vs Leverage: There are no points falling outside of Cook's distance, therefore no influential points.
+    - Scale Location: The residuals look well dispered around the red line and the red line is close to horizontal. We can conclude that homoscedasticity has been satisfied by the model.
+    
+<br>
+
+```{r out.width=c('50%'), fig.show='hold', echo= FALSE , include=TRUE}
+plot(reg_linear, which = 1)
+plot(reg_linear, which = 5)
+plot(reg_linear, which = 2)
+plot(reg_linear, which = 3)
+
+
+```
+
+<br>
+
+#### ANOVA Table 
+
+  + Analysis of the Variance for the predictor:
+  
+    - F-score: 234.44 
+    - P score shows F-score is significant. 
+    - The predictor is significant in the linear model
+    
+<br>
+
+```{r echo=TRUE, include=TRUE}
+options("scipen"=10)
+anova(reg_linear)
+
+```
+
+<br>
+
+##### Histogram of Residuals
+
+  + The histogram of the residuals shows a slightly off normal curve, not exactly balanced around zero.
+  
+  + The difference from normality is not significant to conclude non-normality of errors.
+  
+<br>
+
+```{r out.width=c('50%'), fig.show='hold', echo= FALSE , include=TRUE}
+hist(reg_linear$residuals)
+```
+
+
+<br>
+
+
+##### Correlation Test:
+
+  + p-value < 0.05
+  + correlation: 0.3307999 
+  + Reject $H_0$, correlation is not zero. There is a positive correlation between the two variables.
+
+<br>
+
+```{r echo=TRUE, include=TRUE} 
+
+cor.test(df$income_ratio, df$percent_smokers)
+```
+
+<br>
+
+<br>
+
+
+### Predicting Percent Smokers: Simple Linear Regression model
+***
+
+- Try to predict using the first observation in the data frame (df):
+
+  + Ada, Idaho with income_ratio 4.478032.
+
+<br>
+
+- *Result:*
+
+  + Predicted value: $\hat{y}$ = 17.23905 
+  
+  + Actual value: $y_i$ = 11.99070
+
+  + Confidence interval: [11.78669,, 22.69141]
+
+  + The prediction falls within the 90% confidence interval.
+  
+  + Mean Absolute Error: MAE = 5.248349
+
+<br>
+
+```{r}
+predict(reg_linear, data.frame(income_ratio = 4.478032), interval = "prediction", level = 0.90, se.fit = FALSE)
+
+mae <- mean(abs(df$percent_smokers[1]-17.23905 ))
+mae
+```
+
+<Br>
+
+<br>
+
+### Model: First Order Multiple Linear Regression with Three Variables
+
+***
+
+- For this first order multiple linear regression with two variables, the following variables will be used: 
+
+  + income_ratio
+  + percent_uninsured
+  + percent_adults_with_obesity
+
+<br>
+
+  - Linear Regression Model:  
+  
+    + percent_smokers = 9.27553 + (1.56281) $x_1$ +  (0.09560) $x_2$ + (0.35352) $x_3$
+  
+<br>
+
+  - All predictor variables are significant.
+  - $R^2$ = 0.408 is much higher than with just **income_ratio**. 
+  - Lower variance than previous model : 7.301244
+  
+<br>
+
+```{r echo=TRUE, include=TRUE}
+options("scipen"=10)
+multi_reg <- lm(percent_smokers ~ income_ratio + percent_uninsured + percent_adults_with_obesity , data = df )
+(summary(multi_reg)$sigma)^2
+# coefficients of slope and intercept
+coeffs<- summary(multi_reg)$coefficients
+intercept<-coeffs[1]
+slope<- coeffs[2]
+summary(multi_reg)
+
+```
+
+<br>
+
+#### Plots with Regression Line
+
+<br>
+
+  - Regression line plot with percent_uninsured as predictor: From the observations' pattern, a second order fit would be better.
+  - Regression line plot with percent_adults_with_obesity as predictor. A linear regression looks like a good fit.
+  
+<br>
+
+```{r out.width=c('50%'), fig.show='hold',echo= FALSE , warning=FALSE, message = FALSE, include=TRUE}
+coeffs<- summary(multi_reg)$coefficients
+intercept<-coeffs[1]
+slope_1<- coeffs[2]
+slope_2<- coeffs[3]
+slope_3<- coeffs[4]
+
+ggplot(data = df, aes(x= percent_uninsured , y= percent_smokers)) + geom_point( color="deeppink1")+
+  geom_abline(intercept = intercept, slope = slope, color="black", 
+                size=1)+ ggtitle("Percent Uninsured vs. Percent Smokers") +
+   ylab("Percent Smokers") + xlab("Percent Uninsured")
+
+ggplot(data = df, aes(x= percent_adults_with_obesity, y= percent_smokers)) + geom_point( color="deeppink1")+
+  geom_abline(intercept = intercept, slope = slope_3, color="black", 
+                size=1)+ ggtitle("Percent Adults with Obesity vs. Percent Smokers") +
+   ylab("Percent Smokers") + xlab("Adults with Obesityo")
+
+```
+
+
+<br>
+
+<br>
+
+
+### Study of Residuals and Other Diagnostics
+***
+
+<br>
+
+#### Plots: Time Plot, Residuals vs Y, Normal QQ, Error Variances, Scale-Location, Residual vs Leverage
+***
+
+  + Time plot of residuals:
+  
+    - There is no obvious pattern in the time plot.
+    
+<br>
+
+```{r out.width=c('50%'), fig.show='hold', echo= FALSE , include=TRUE}
+ei<-multi_reg$residuals
+n<-seq(1:length(ei))
+par(mfrow=c(1,1))
+plot(n,ei,type="l")
+
+```
+
+<br>
+
+  + Additional Plots to check regression assumptions:
+  
+    - All plot show that the assumptions are being met with this multiple linear regression model.
+  
+<br>
+```{r out.width=c('50%'), fig.show='hold', echo= FALSE , include=TRUE}
+plot(multi_reg, which = 1)
+plot(multi_reg, which = 5)
+plot(multi_reg, which = 2)
+plot(multi_reg, which = 3)
+
+
+```
+
+<br>
+
+#### Shapiro-Wilk Test: Used to test for normality of errors: 
+***
+
+  + Alternatives:
+
+      - $H_0$: if p > 0.05, Error variances are normally distributed
+      - $H_a$: if p < 0.05, Error variances are not normally distributed
+
+<br>
+
+  - Conclusion:
+  
+    + The p-value = 0.0003605
+  
+    + The test tells us that the errors are not normally distributed.
+    
+    + This test is not agreeing with what we found in our visual analysis of the Normal QQ plot.
+    
+    + A histogram of the residuals is needed.
+    
+<br>
+
+```{r echo=TRUE, include=TRUE}
+shapiro.test(rstandard(multi_reg))
+```
+
+<br>
+
+
+<br>
+
+
+##### Histogram of Residuals
+
+  + The histogram of the residuals shows a right skewed normal curve.
+  
+  + There is less normality than in previous regression line.
+  
+<br>
+
+```{r out.width=c('50%'), fig.show='hold', echo= FALSE , include=TRUE}
+hist(multi_reg$residuals)
+```
+
+<br>
+
+
+<br>
+
+
+
+#### ANOVA Table 
+
+  + Analysis of the Variance for each predictor shows that the following features have the highest F-score in this model:
+  
+    - Percent adults with obesity has the highest F-score.
+
+```{r echo=TRUE, include=TRUE}
+options("scipen"=10)
+anova(multi_reg)
+
+```
+
+<br>
+
+
+
+<br>
+
+
+```{r echo=TRUE, include=TRUE}
+library(lmtest)
+bptest(multi_reg, studentize = TRUE)
+
+```
+<br>
+
+### Predicting Percent Smokers: Multiple Linear Regression model
+***
+
+- Try to predict using the first observation in the data frame (df):
+
+  + Ada, Idaho:
+  
+    - income_ratio = 4.478032
+    - percent_uninsured = 8.743292
+    - percent_adults_with_obesity = 25.6
+
+<br>
+
+- *Result:*
+
+  + Predicted value: $\hat{y}$ = 14.78608
+  
+  + Actual value: $y_i$ = 11.99070
+
+  + Confidence interval: [10.33631 , 19.2358]
+
+  + The prediction accuracy has improved with using the 3 predictors
+  
+    - The confidence interval has also narrowed.
+  
+    - Mean Absolute Error: (MAE) = 3.898311
+
+<br>
+
+```{r}
+
+df_predict <- data.frame(income_ratio = 4.478032, percent_uninsured = 8.743292, percent_adults_with_obesity = 25.6 )
+
+y_hat2<- predict(multi_reg, df_predict, interval = "prediction", level = 0.90, se.fit = FALSE)
+
+mae2 <- mean(abs(df$percent_smokers[1]-y_hat2))
+mae2
+```
+
+
+<br>
+
+<br>
+
+### Conclusion
+***
+
+  The multiple first order linear regression model did better at predicting than the simple first order linear regression model. Although the simple linear regression model did have all assumption met in terms of errors (from plots) and the predictor variable was significant, it has higher variance, higher MAE, and lower $R^2$. We can conclude that the multiple linear regression model is a better model.
+  
+  - Model equation: $\hat{Y}$ = -0.43435 + 1.30683 *income_ratio* + 0.03641 *percenut_uninsured* + 0.35352 *percent_adults_with_obesity
+  
+  - income_ratio has almost a 1:1 ratio with percent_smokers.
+  
+<br>
+
+<br>
+
+| Model       |  Predictors                                                  | $R^2$  |Variance $s^2$|Mean Absolute Error|
+|-------------|--------------------------------------------------------------|--------|--------------|-------------------|
+| simple      |            income_ratio                                      | 0.1094 | 10.9714      | 5.248349          |
+| multiple    | income_ratio, percent_uninsured, percent_adults_with_obesity | 0.407  | 7.301244     | 3.898311          |
+
+
+<br>
+
+<br>
+
+
