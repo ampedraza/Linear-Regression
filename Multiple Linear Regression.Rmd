@@ -1,0 +1,819 @@
+---
+title: "Multiple Linear Regression: First Order and Second Order"
+author: "Alison Pedraza"
+date: '2024-04-10'
+output: html_document
+---
+
+```{r setup, include=FALSE, warning=FALSE}
+knitr::opts_chunk$set( warning = FALSE, message = FALSE)
+library(readr)
+library(knitr)
+#ibrary(caret)
+library(tidyverse)
+library(magrittr)
+library(dplyr)
+library(tidyr)
+library(hrbrthemes)
+library(viridis)
+library(kableExtra)
+library(maps) # for mapping the USA by county and state
+library(stringr)  # to turn first letter of column data into capital letter
+library(MASS)
+library(MASS)   # For using Box-Cox Transformation function
+
+```
+
+### Project Purpose, Contents, and Data Sources:
+***
+
+**Purpose**
+
+  + To use First and Second order Multiple Linear Regression on chronic disease indicator data and Covid data to predict total Covid deaths.
+
+<br>
+
+**Contents:**
+
+  + Download of two separate data sets, scrub and clean  each.
+  
+  + Join both data sets and prepare data for regression.
+  
+  + Exploratory Data Analysis (EDA) on final data frame
+
+  + Multiple Linear Regression: 
+  
+    - First order full model
+    - First order reduced model
+    - Transformed model using Box-Cox transformation
+    - Second order model
+  
+  + Study of Residuals and other Diagnostics
+  
+  + General Linear Test approach used on full and reduced model.
+  
+  + Predict total Covid deaths using all four models
+
+<br>
+
+
+**The Data:**
+
+- Chronic Disease Indicators data set:
+
+  + Disease Indicators data comes from Data.gov,  U.S. Department of Health & Human Services, and Centers of Disease Control and Prevention.
+  
+  + Full dataset name: **U.S. Chronic Disease Indicators**
+  
+  + URL link: **https://catalog.data.gov/dataset/u-s-chronic-disease-indicators-cdi**
+  
+  + The full data set is offered on the above website.
+  
+  + Since the original data set has 124 indicators and very large, a subset of the original dataset was used for the purposes of this analysis exercise.
+  
+  <br>
+  
+- Covid Data:
+
+  + From Kaggle Website : **https://www.kaggle.com/datasets/imdevskp/corona-virus-report**
+  
+  + Dataset is from year 2020.
+  
+  + Contains data at the county and state level.
+  
+
+<br>
+
+
+### Data Collection and Preparation:
+***
+
+- Chronic Disease Indicator Data:
+```{r echo= TRUE , include=TRUE}
+DI_df <- read.csv("Disease_Indicators_data.csv")
+
+DI_df2<- DI_df%>%dplyr::select("County", "Percent.of.population.aged.18.34", "Percent.of.population.65.or.older", "Number.of.active.physicians","Number.of.hospital.beds", "Total.serious.crimes" , "Percent.high.school.graduates", "Percent.bachelor.s.degrees", "Percent.below.poverty.level" , "Percent.unemployment",  "Total.personal.income", "Geographic.region")
+
+colnames(DI_df2) <- c("county", "Percent_population_aged_18_34","Percent_population_65_older","Number_active._physicians","Number_hospital_beds", "Total_serious_crimes" , "Percent_highschool_graduates","Percent_bachelor_degrees","Percent_below_poverty_level" , "Percent_unemployment",  "Total_personal_income", "Geographic_region")
+
+DI_df2$NE <- I(DI_df2$Geographic_region=="1")*1
+DI_df2$MW <- I(DI_df2$Geographic_region=="2")*1
+DI_df2$STH <- I(DI_df2$Geographic_region=="3")*1
+DI_df2$WST <- I(DI_df2$Geographic_region=="4")*1
+
+# Remove the '_' character from the county names in the  'county' column :
+DI_df2$county<-gsub("_"," ",as.character(DI_df2$county))
+```
+
+<br>
+
+- Covid Data
+```{r echo= TRUE ,  include=TRUE}
+covid_df <- read.csv("covid_data.csv")
+
+# select columns
+covid_A<- covid_df%>%dplyr::select( "county", "state" ,  "fips" ,"cases"  ,  "deaths", "stay_at_home_announced", "stay_at_home_effective" ,  "total_population","area_sqmi" ,"population_density_per_sqmi","num_deaths", "years_of_potential_life_lost_rate", "percent_smokers" ,"percent_adults_with_obesity" ,"food_environment_index", "income_ratio" , "percent_physically_i0ctive" , "percent_uninsured" ,"num_primary_care_physicians" )
+
+
+# Group by county and state - with MAX COVID CASES AND COVID DEATHS
+covid_B <- covid_A%>%group_by(county, state, fips, total_population, population_density_per_sqmi,  years_of_potential_life_lost_rate,percent_smokers,percent_adults_with_obesity,
+              food_environment_index,income_ratio,percent_physically_i0ctive,percent_uninsured,
+              num_primary_care_physicians)%>%summarise(total_covid_cases = max(cases), total_covid_deaths = max(deaths))
+
+colnames(covid_B)[11] <- "Percent_physically_inactive"
+
+covid_B[is.na(covid_B)] = 0 # Replace NA with 0
+
+```
+
+<br>
+
+#### Final Data Frame
+
+  + Because of unmatched counties, there are some NA values from joining the two data frames.
+  
+  + Columns with NA values:
+  
+    - years_of_potential_life_lost_rate 
+    - food_environment_index  
+    - income_ratio   
+    - num_primary_care_physicians
+
+<br>
+
+  
+  + Replaced NA values with 0 instead of removing the rows.
+  
+<br>
+
+```{r echo= TRUE ,  include=TRUE}
+# Join the two data frames by County since what have in common
+df2 <- left_join(covid_B, DI_df2, by = c("county"))   # Using Max Covid cases and Covid deaths
+
+# Using Max deaths and Max Covid Cases
+df2 <- df2%>%drop_na(Percent_population_aged_18_34,  Percent_population_65_older, Number_active._physicians, Number_hospital_beds ,Total_serious_crimes, Percent_highschool_graduates ,Percent_bachelor_degrees ,Percent_below_poverty_level, Percent_unemployment,Total_personal_income)
+
+df2$total_covid_deaths <- replace(df2$total_covid_deaths, df2$total_covid_deaths == 0, 0.01)
+
+
+kbl(head(df2)) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"))
+
+```
+
+<br>
+
+
+<br>
+
+### Exploratory Data Analysis
+***
+
+##### Density Plots
+
+<br>
+
+  + The density plot shows the distribution of total covid deaths at the county level
+  + In the states selected, total population for each county and total deaths from Covid are not different. This could suggest that counties with high total population will have high total Covid deaths.
+  
+<br>
+  
+
+```{r echo= FALSE , include=TRUE}
+
+numeric_df <- df2%>%  filter(state %in% c("Texas","California","Florida","Illinois", "Ohio", "New York", "Massachusetts", "New Jersey"))
+```
+
+```{r out.width=c('50%'), fig.show='hold', echo= FALSE , include=TRUE}
+library(ggridges)
+library(forcats)
+ggplot(numeric_df, aes(x = total_population, y = state, fill = state)) +
+  geom_density_ridges() + ggtitle("Total Population: County distribution")+
+  theme_ridges() + 
+  theme(legend.position = "none")
+
+
+ggplot(numeric_df, aes(x = total_covid_deaths, y = state, fill = state)) +
+  geom_density_ridges() +
+  theme_ridges() +  ggtitle("Total Covid Deaths: County distribution")+
+  theme(legend.position = "none")
+
+
+```
+
+<br>
+
+<br>
+
+ 
+##### Histogram of Total Covid Deaths: 
+
+  + **Total covid deaths** is not very normally distributed. It is slightly left skewed. This may affect the distribution of errors as well. 
+  
+  + **Total Covid Cases** is more normally distributed. 
+
+<br>
+
+```{r  out.width=c('50%'), fig.show='hold',echo=FALSE, include=TRUE}
+
+df2%>%ggplot( aes(x=total_covid_deaths)) +
+    geom_histogram(bins=20, fill='skyblue', color='#69b3a2') + scale_x_log10() + ggtitle("Histogram of Total Covid Deaths")
+
+df2%>%ggplot( aes(x=total_covid_cases)) +
+    geom_histogram(bins=20, fill='lightpink', color='#69b3a2') + scale_x_log10() + ggtitle("Histogram of Total Covid Cases")
+```
+
+<br>
+
+##### Scatter Plots: 
+
+<br>
+
+  + There does not seem to be an obvious linear relationship between **total covid deaths** and many of the predictors.
+  
+  + There is a funnel shape to the observations with the predictors **total serious crimes**, **number of active physicians**, and **total population**.
+
+<br>
+
+```{r  out.width=c('50%'), fig.show='hold', echo= FALSE , include=TRUE, warning=FALSE}
+
+df2%>%ggplot(aes(x= percent_smokers, y= total_covid_deaths, color = Percent_unemployment)) + 
+    geom_point(size=1, color = "purple")+
+  scale_color_brewer(palette = "PuOr")+
+  scale_y_continuous(labels = scales::label_number_si())+
+    labs(y = "total covid deaths", x = "percent_smokers")+ggtitle("Percent smokers vs. Total Covid Deaths")+
+    theme_ipsum()
+
+df2%>%ggplot(aes(x= income_ratio, y= total_covid_deaths, color = income_ratio))+
+    geom_point(alpha = 0.5)+
+  scale_y_continuous(labels = scales::label_number_si())+
+    labs(y = "total covid deaths", x = "Income Ratio")+ggtitle("Income Ratio vs. Total covid deaths")+
+    theme_ipsum()
+
+df2%>%ggplot(aes(x= percent_uninsured, y = total_covid_deaths)) + 
+    geom_point( alpha =0.5) +
+  scale_size(range = c(.1, 10))+
+  scale_y_continuous(labels = scales::label_number_si())+
+    labs(y = "total covid deaths", x = "Percent Uninsured")+ 
+  ggtitle("Percent Uninsured vs. Total covid deaths")+
+    theme_ipsum()
+```
+
+
+```{r out.width=c('50%'), fig.show='hold', echo= FALSE , include=TRUE, warning=FALSE}
+library(ggthemes)
+
+df2%>%ggplot(aes(x= total_population, y = total_covid_deaths,  color = Geographic_region)) + 
+    geom_point( alpha =0.5) +
+  scale_size(range = c(.1, 10))+
+  scale_y_continuous(labels = scales::label_number_si())+
+    labs(y = "total covid deaths", x = "total population")+  theme_ipsum()+
+  ggtitle("Total Population vs. Total Covid Deaths")
+
+
+df2%>%ggplot(aes(x= Total_personal_income, y = total_covid_deaths,  color = Geographic_region)) + 
+    geom_point( alpha =0.5) +
+  scale_size(range = c(.1, 10))+
+  scale_y_continuous(labels = scales::label_number_si())+
+    labs(y = "Percent Smokers", x = "Percent Uninsured")+  theme_ipsum()+
+  ggtitle("Percent Uninsured & Region vs. Percent Smokers")
+  
+
+df2%>%filter(Geographic_region %in% c("4"))%>%ggplot(aes(x= Number_active._physicians, y = total_covid_deaths, size = income_ratio,color = income_ratio)) + 
+    geom_point( alpha =0.7) +
+  scale_size(range = c(.1, 5))+
+  scale_y_continuous(labels = scales::label_number_si())+ scale_color_viridis(option = "cividis") +
+    labs(y = "Total Covid Deaths", x = "Number of Active Physicians")+  theme_ipsum()+
+  ggtitle("West: Total Covid Deaths vs. Number Active Physicians")
+
+
+df2%>%filter(Geographic_region %in% c("3"))%>%ggplot(aes(x= Percent_population_65_older, y = total_covid_deaths)) + 
+    geom_point( alpha =0.7) +
+  scale_size(range = c(.1, 5))+ theme_ipsum()+
+  scale_y_continuous(labels = scales::label_number_si())+ scale_color_viridis(option = "plasma") +
+    labs(y = "Total Covid Deaths", x = "Percent Population 65 and Older")+ 
+  ggtitle("South: Percent Population 65 and Older vs.Total Covid Deaths")
+
+
+df2%>%filter(Geographic_region %in% c("2"))%>%ggplot(aes(x= Total_serious_crimes, y = total_covid_deaths, size = income_ratio, color = income_ratio)) + 
+    geom_point( alpha =0.7) +
+  scale_size(range = c(.1, 5))+  theme_ipsum()+
+  scale_y_continuous(labels = scales::label_number_si())+scale_color_viridis(option = "inferno") +
+    labs(y = "Total Covid Deaths", x = "Total Serious Crimes")+ 
+  ggtitle("MidWest: Total Serious Crimes vs. Total Covid Deaths")
+
+
+library(ggthemes)
+df2%>%filter(Geographic_region %in% c("1"))%>%ggplot(aes(x= Total_personal_income, y = total_covid_deaths,size = income_ratio, color = income_ratio)) + 
+    geom_point( alpha =0.5) +
+  scale_size(range = c(.1, 5))+   theme_ipsum() +scale_color_viridis(option = "magma") +
+  scale_y_continuous(labels = scales::label_number_si())+
+    labs(y = "Total Covid Deaths", x = "Food Environment Index")+ 
+  ggtitle("North East: Total Personal Income vs. Total Covid Deaths")
+ 
+```
+
+
+<br>
+
+
+<br>
+
+### Split Data: Test and Train Split
+
+<br>
+
+```{r  echo= TRUE , include=TRUE, warning=FALSE}
+set.seed(123)
+n <- dim(df2)[1]
+
+new_df <- df2[, -c(1, 2, 3, 26)]
+indices <- sample(1:n, 0.7*n)
+train_df <- new_df[indices, ]
+test_df <- new_df[-indices,]
+```
+
+
+<br>
+
+
+<br>
+
+### First Order Multiple Linear Regression
+***
+
+- For this first order multiple linear regression, **state** and **county** and **fips** will not be used since dummy variables for Geographic Region will be used instead.  (Geographic region Dummy Variables: NE, STH, WST, MW)
+
+  + state
+  + Geographic_region
+  + county
+  + fips
+  
+<br>
+  
+- Summary shows:
+
+  + Residual Standard Error = 145.9   
+  + Adjusted $R^2$ = 0.8408   
+  + F-statistic = 295.1   
+  
+<br>
+
+```{r echo=TRUE, include=TRUE}
+options("scipen"=10)
+multi_reg_full <- lm(total_covid_deaths ~. , data = train_df )
+summary(multi_reg_full)
+
+```
+
+<br>
+
+
+<br>
+
+
+### Study of Residuals and Other Diagnostics for First Order Full Model
+***
+
+<br>   
+
+#### Plots: First Order Full Model
+
+
+  + Time plot of residuals:
+  
+    - There is no obvious pattern in the time plot.
+    
+<br>
+
+```{r out.width=c('50%'), fig.show='hold', echo= FALSE , include=TRUE}
+ei<-multi_reg_full$residuals
+n<-seq(1:length(ei))
+par(mfrow=c(1,1))
+plot(n,ei,type="l", main = "Timw Plot of Residuals")
+
+```
+
+<br>
+
+  + Additional Plots to check regression assumptions:
+  
+    - Funnel shape for residuals. They are not constant.
+    - Some outliers are present as seen in Residual-Leverage plot:
+      + observations: 149, 1255, 594
+    
+  
+<br>
+```{r out.width=c('50%'), fig.show='hold', echo= FALSE , include=TRUE}
+plot(multi_reg_full, which = 1)
+plot(multi_reg_full, which = 5)
+plot(multi_reg_full, which = 2)
+plot(multi_reg_full, which = 3)
+
+
+```
+
+<br>
+
+```{r out.width=c('50%'), fig.show='hold', echo= FALSE , include=TRUE}
+hist(multi_reg_full$residuals)
+```
+
+<br>
+
+<br>
+
+#### ANOVA Table 
+
+  + Analysis of the Variance for each predictor shows that the following features have the highest F-score in this model: 
+  
+    - Total population
+    - population density per sqr mile
+    - Total covid cases
+    - percent physical inactivity
+    
+<br>
+
+```{r echo=TRUE, include=TRUE}
+options("scipen"=10)
+anova(multi_reg_full)
+
+```
+
+<br>
+
+### General Linear Test Approach
+***
+
+
+#### Reduced Model: Multiple First Order Regression model using only the following variables:
+  
+  + total_population                     
+  + population_density_per_sqmi  
+  + food_environment_index       
+  + income_ratio                        
+  + Percent_physically_inactive          
+  + Total_serious_crimes         
+  + Percent_below_poverty_level    
+  + Percent_unemployment   
+  + Total_personal_income           
+  + NE
+  + MW
+
+  
+```{r echo=TRUE, include=TRUE}
+multi_reg_red <- lm(total_covid_deaths ~ total_population + population_density_per_sqmi +years_of_potential_life_lost_rate    +  years_of_potential_life_lost_rate  + income_ratio + Percent_physically_inactive + Total_serious_crimes +  Percent_below_poverty_level  +   Percent_unemployment + Total_personal_income + NE + MW , data = train_df)
+summary(multi_reg_red)
+```
+
+
+<br>
+
+<br>
+
+
+#### Plots: First Order Reduced Model
+
+<br>
+
+  + The residuals are still funnel shaped and the red line is no longer horizontal.
+  
+  + Outliers are still the same as in full model.
+  
+  + There is no improvement in the Normal QQ plot.
+
+```{r out.width=c('50%'), fig.show='hold', echo= FALSE , include=TRUE}
+plot(multi_reg_red, which = 1)
+plot(multi_reg_red, which = 5)
+plot(multi_reg_red, which = 2)
+plot(multi_reg_red, which = 3)
+
+
+```
+
+<br>
+
+
+
+<br>
+
+### Analysis of Model: Additional Tests on Errors
+  
+<br>
+
+##### Shapiro-Wilk Test for normality
+***
+
++ Alternatives:
+
+  - $H_0$: if p > 0.05, Error variances are normally distributed
+  - $H_a$: if p < 0.05, Error variances are not normally distributed
+
+<br>
+
+  - Conclusion:
+  
+    + Errors are not normally distributed.
+    
+    + This test confirms what we found in our visual analysis of the Normal QQ plot.
+    
+<br>
+
+```{r echo=TRUE, include=TRUE}
+
+shapiro.test(multi_reg_red$residuals)
+
+```
+
+
+<br>
+
+##### Breush-Pagan Test (with alpha = .05.): for constancy of errors
+***
+
+  + Since visual analysis shows that the errors are not constant but seem to increase with the value of X, we are doing a Breusch-Pagan test to determine if this is infact so.
+  
+Alternatives:
+
+- $H_0$: Error variances are constant
+- $H_a$: Error variances are not constant
+
+<br>
+
+Decision Rule:
+
+- If p_value > 0.05, accept $H_0$, error variances are constant
+- If p_value < 0.05, reject $H_0$, error variances are not constant
+
+<br>
+
+Conclusion:
+
+- p_value < 0.05
+- We **reject** the null hypothesis, $H_0$. The error variances are not constant.
+
+<br>
+
+```{r}
+library(lmtest)
+bptest(multi_reg_red, studentize = FALSE)
+
+```
+
+<br>
+
+
+
+<br>
+
+
+
+#### General Linear Test with ANOVA : To compare both models
+***
+
+  - Anova (reduced model, full model) with $\alpha$ = 0.10
+  
+  - Alternatives: 
+    
+    + $H_0$: Coefficients of eliminated predictors = 0; Reduced model reduces variablity significantly
+    + $H_a$: Coefficients of elimintaed predictors $\neq$ 0 . Full model reduces variablity more than reduced model.
+    
+    
+        
+  + Conclusion:
+  
+    - F* = 9.6407     , F_critical = 2.397052
+  
+    - F* > F_critical, we reject the null hypothesis. 
+    
+
+<br>
+
+
+```{r}
+anova(multi_reg_red, multi_reg_full)
+# critical value
+
+t_critical =qt(1-.10/12, 1313 ) 
+t_critical
+```
+
+<br>
+
+<br>
+
+#### Transformation on Response Variable: Box-Cox Transformation
+***
+
+ + To find an appropriate transformation for lambda. 
+ 
+ + Full model used.
+  
+  + The Box-Cox transformation suggests $\lambda$ = 0.2363636
+  
+  + Using $\lambda$  value to do a **log transformation** of Y to transform the predictor variable:
+  
+      + Y^0.2363636
+      
+<br>
+    
+```{r out.width=c('40%'), fig.show='hold', echo= FALSE , include=TRUE, warning=FALSE}
+library(MASS)
+# Replacing zeros with 0.01 in the 'total_covid_deaths' column
+
+bc_result = boxcox(multi_reg_full,lambda=seq(0.15,0.30,by=.05))
+best.lam=bc_result$x[which(bc_result$y==max(bc_result$y))]
+best.lam
+
+```
+
+<br>
+
+  + Linear Regression on transfromed variable **total_covid_deaths**
+  
+    - Transformation has reduced the $R^2$ value and the F-statistic.
+    
+<br>
+
+```{r  echo= FALSE , include=TRUE, warning=FALSE}
+train_df$trans <- (train_df$total_covid_deaths)^0.2363636
+transformed_lm <- lm(trans ~ ., data = train_df)
+summary(transformed_lm)
+
+
+```
+
+<br>
+
+#### Plots of Regression Model with Transformed Variable
+
+
+<br>
+
+  + Residuals:
+  
+    - Non-constancy of errors has increased.
+
+  + Outliers:
+  
+    - Observations: 594, 149, 594
+    
+    - These observations could be distorting the plot results
+    
+  + Normality:
+  
+    - The Normal QQ plot has improved from the transformation
+    
+
+<br>
+
+```{r out.width=c('50%'), fig.show='hold', echo= FALSE , include=TRUE}
+plot(transformed_lm)
+```
+
+<br>
+
+
+<br>
+
+
+### Second Order Regression Model
+***
+
+  + Using squared predicted variables: 
+    - Total Personal Income
+    - Total Serious Crimes
+  
+  + Removing outliers  (observations: 149, 1255, 594)
+
+<br>
+
+```{r echo=TRUE, include=TRUE}
+train_df2 <- train_df[-c(149, 1255, 594), ]
+train_df2 <- train_df2[, -c(27) ]
+
+# Centering needed.
+x_crimes = (train_df2$Total_serious_crimes - mean(train_df2$Total_serious_crimes))
+train_df2$x_crimes_sqr = x_crimes^2
+
+x_income = (train_df2$Total_personal_income - mean(train_df2$Total_personal_income))
+train_df2$x_income_sqr = x_income^2
+
+
+multi_second_order <- lm(total_covid_deaths ~  x_crimes_sqr + x_income_sqr+ total_population + num_primary_care_physicians + Percent_population_aged_18_34 + Percent_bachelor_degrees+ Number_active._physicians + NE + percent_uninsured + total_covid_cases + years_of_potential_life_lost_rate  + Percent_physically_inactive + MW+ Percent_highschool_graduates + percent_adults_with_obesity+ population_density_per_sqmi+  food_environment_index+ Percent_unemployment +  Percent_below_poverty_level + Percent_population_65_older + WST+ STH + Number_hospital_beds, data = train_df2)
+
+
+summary(multi_second_order)
+
+```
+
+<br>
+
+#### Plots: Residuals vs Y, Normal QQ, Error Variances, Scale-Location, Residual vs Leverage
+
+
+```{r out.width=c('50%'), fig.show='hold', echo= FALSE , include=TRUE}
+
+plot(multi_second_order)
+
+```
+
+<br>
+
+### Predict Total Covid Deaths
+***
+
+ + Use predict() function with the full first order and second order multiple linear regression models.
+
+<br>
+
+#### Summary of Prediction and Model Results:
+***
+
+<br>
+
+
+```{r echo=TRUE, include=TRUE}
+
+pred_full <- predict(multi_reg_full, newdata =  test_df)
+pred_reduced <- predict(multi_reg_red, newdata =  test_df)
+pred_transf <- predict(transformed_lm, newdata = test_df)
+
+test_df2 <- test_df[, -c(17, 22)]
+x_crimes = (test_df$Total_serious_crimes - mean(test_df$Total_serious_crimes))
+test_df2$x_crimes_sqr = x_crimes^2
+
+x_income = (test_df$Total_personal_income - mean(test_df$Total_personal_income))
+test_df2$x_income_sqr = x_income^2
+
+
+pred_second<- predict(multi_second_order, newdata =  test_df2)
+
+full_model <- data.frame(obs = test_df$total_covid_deaths, pred = pred_full)
+
+reduced_model <- data.frame(obs = test_df$total_covid_deaths, pred = pred_reduced)
+
+transf_model <- data.frame(obs = test_df$total_covid_deaths, pred = pred_transf)
+
+second_model <- data.frame(obs = test_df$total_covid_deaths, pred = pred_second)
+
+# Get Total Sum of Squares to get MAE and MSE and R squared values for prediction results
+SST <- sum((test_df$total_covid_deaths - mean(test_df$total_covid_deaths))^2)
+
+# first order full
+MAE_first <- mean(abs(pred_full - test_df$total_covid_deaths))
+MSE_first <- mean((pred_full - test_df$total_covid_deaths)^2)
+SSR_first <- sum((pred_full - mean(test_df$total_covid_deaths))^2)
+R_squared_full <- SSR_first/SST
+
+#  first order Reduced
+MAE_red <- mean(abs(pred_reduced - test_df$total_covid_deaths))
+MSE_red <- mean((pred_reduced - test_df$total_covid_deaths)^2)
+SSR_red <- sum((pred_reduced - mean(test_df$total_covid_deaths))^2)
+R_squared_red <- SSR_red/SST
+
+# Transformed Y
+MAE_tranf <- mean(abs(pred_transf - test_df$total_covid_deaths))
+MSE_transf <- mean((pred_transf - test_df$total_covid_deaths)^2)
+SSR_transf <- sum((pred_transf - mean(test_df$total_covid_deaths))^2)
+R_squared_transf <- SSR_transf/SST
+
+# Second order full
+MAE_second <- mean(abs(pred_second - test_df$total_covid_deaths))
+MSE_second <- mean((pred_second - test_df$total_covid_deaths)^2)
+SSR_second <- sum((pred_second - mean(test_df$total_covid_deaths))^2)
+R_squared_second <- SSR_second/SST
+
+red_rsquared <- summary(multi_reg_red)$r.squared
+full_rsquared <- summary(multi_reg_full)$r.squared
+transf_rsquared <- summary(transformed_lm)$r.squared
+multi_rsquared <- summary(multi_second_order)$r.squared
+
+results_df <- data.frame( Model = c("Full-first order", "Reduced-first order", "Transformed Y", "Second Order"), Prediction_Rsqrd = c (R_squared_full, R_squared_red, R_squared_transf, R_squared_second), Model_Rsqrd = c(full_rsquared, red_rsquared,transf_rsquared, multi_rsquared ) )
+```
+
+<br>
+
+#### Results
+```{r}
+kbl(results_df) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"))
+
+```
+
+
+
+<br>
+
+#### Conclusion
+
+  + The second order multiple linear regression model has both the highest $R^2$ from prediction results and from the model results. 
+  
+  + The reduced model has a slightly higher predictability than the full model even though its model's $R^2$ is lower.
+  
+  + Transformation of the observation variable did very poorly in both prediction and model results.
+  
+
+
+<br>
+
